@@ -1,0 +1,772 @@
+Exploration of Financial Contributions to United States Presedential Campaign of 2016 by the State of New Jersey by Madhu Shri Rajagopalan
+========================================================
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, packages}
+# Load all of the packages used in the analysis
+library(gender)
+library(reshape2)
+library(magrittr)
+library(ggplot2)
+library(scales)
+library(dplyr)
+#install.pacakages("genderdata", repos = "http://packages.ropensci.org",
+                    #type = "source")
+library(gender)
+library(stringr)
+library(lubridate)
+library(tidyr)
+library(zipcode)
+library(maps)
+library(gridExtra)
+library(choroplethr)
+library(choroplethrMaps)
+#library(devtools)
+#install_github('arilamstein/choroplethrZip@v1.4.0')
+library(choroplethrZip)
+```
+##Data Loading and Cleaning
+
+The data set to be loaded contains all the financial contributions to the united states presedential campaign of 2016 by the State of New Jersey. 
+
+```{r echo=FALSE, Load_the_Data}
+# Load the Data
+NJContributions <- read.csv('NewJerseyData.csv', stringsAsFactors = F,
+                                                        row.names = NULL)[,-19]
+
+colnames(NJContributions)<-c('cmte_id','CandidateID','CandidateName', 
+                            'ContributorName','ContributorCity',
+                            'ContributorState','ContributorZip',
+                            'ContributorEmployer','ContributorOcupation',
+                            'ContributorReceiptAmount','ContributorReceiptDate',
+                            'ReceiptDescription','memo_cd','memo_text',
+                            'form_tp','file_num','tran_id','election_tp')
+dim(NJContributions)
+```
+
+
+This dataset contains 203,883 observations and 18 variables. 
+
+Struture of the Data: 
+```{r echo=FALSE}
+str(NJContributions)
+
+```
+
+From the structure of the data above, the summary of the contributor's receipt amount will be helpful to carry out the further analysis. Also, the summary of other variables will not make much sense since they are of the type character.  
+```{r echo=FALSE}
+summary(NJContributions$ContributorReceiptAmount)
+
+```
+
+From the summary, it looks like the minimum contribution is -7500 and the maximum is at 10800.00 in terms of dollars. The negative contribution looks like a refund. When looking further into this, I found from Federal Election Commision website [FEC] (www.fec.gov/help-candidates-and-committees/candidate-taking-receipts/contribution-limits-candidates/) that the individual contribution limit is at 2,700$ per individual and any other additional amount contributed will be refunded. To proceed further with the analysis, I'm filtering the data to include only the data that has a cotribution limit over zero and under 2700 which is the limit. 
+
+```{r echo=FALSE}
+
+NewNJContributions <- subset(NJContributions, 
+                             NJContributions$ContributorReceiptAmount > 0 &
+                               NJContributions$ContributorReceiptAmount <= 2700)
+
+dim(NewNJContributions)
+```
+After filtering, there are 201166 observations and 18 variables. 
+
+Before proceeding with further analysis and plotting, I would like to add variables to the dataset that would help with my analysis. The variables I would like to explore with are the Party (Democratic,Republican, Green, Liberatarian, Independent). gender (male/female), year and month variable, latitude and longitude for exploring contribution distributions over the map of state of New Jersey.
+
+```{r echo=FALSE}
+
+#Add party variable based on the Candidates Name
+
+Democrats <- c("Clinton, Hillary Rodham", "Sanders, Bernard",
+               "O'Malley, Martin Joseph", "Lessig, Lawrence",
+               "Webb, James Henry Jr.")
+
+Libertarian <- c("Johnson, Gary")
+
+Green <- ("Stein, Jill")
+
+Independent <- c("McMullin, Evan")
+
+NewNJContributions$Party<-ifelse(NewNJContributions$CandidateName %in% Democrats,
+                                   "Democrat",
+                      ifelse(NewNJContributions$CandidateName %in% Libertarian,
+                                   "Libertarian",
+                         ifelse(NewNJContributions$CandidateName %in% Green,
+                                    "Green",
+                      ifelse(NewNJContributions$CandidateName %in% Independent,
+                             "Independent", "Republican"))))
+
+
+print("Structure of Party Variable")
+str(NewNJContributions$Party)
+
+# Add gender variable using the gender library 
+
+NameSplit<-colsplit(NewNJContributions$ContributorName, ",",c("FirstName","LastName"))
+NewNJContributions <- cbind(NewNJContributions, NameSplit)
+NewNJContributions$FirstName <- gsub(" ", "", NewNJContributions$FirstName, 
+                                     fixed = TRUE)
+NewNJContributions$FirstName <- str_replace_all(NewNJContributions$FirstName,
+                                                "[[:punct:]]", "")
+gender <- gender(NewNJContributions$FirstName, c(1932,2012), method = "ssa", 
+                 countries = "United States")
+names(gender)[1] = "FirstName"
+gender <- unique(gender)
+NewNJContributions <- merge(NewNJContributions,gender[,c("FirstName","gender")],all.x = TRUE)
+
+print("Structure of Gender Variable")
+str(NewNJContributions$gender)
+
+#Adding the month, year variable 
+
+NewNJContributions <- NewNJContributions %>%
+                      mutate(date = as.Date(ContributorReceiptDate,"%d-%b-%y"), 
+                              year = year(date),
+                               month = month(date),
+                               year_month = paste(month.abb[month], ",", year))
+
+print("Structure of Month,Year Variable")
+str(NewNJContributions$year_month)
+
+#Adding Latitude, longitude and other variables used to plot in map 
+
+
+data(zipcode)
+NewNJContributions$ContributorZip<-substr(NewNJContributions$ContributorZip,1,5)
+NewNJContributions$ContributorZip<-as.character(NewNJContributions$ContributorZip)
+NewNJContributions$ContributorZip<-clean.zipcodes(NewNJContributions$ContributorZip)
+NJZipcode <- subset(zipcode, state =="NJ")[,-c(2,3)]
+colnames(NJZipcode) <- c("ContributorZip", "Latitude" , "Longitude")
+NewNJContributions <- merge(NewNJContributions, NJZipcode, all.x = TRUE)
+
+#Adding Map of NJ 
+
+NJmap = map_data('county','New Jersey')
+
+#Name of Counties on map 
+
+CountyNames <-aggregate(cbind(long,lat) ~ subregion, data = NJmap,
+                        function(x) mean(range(x)))
+
+```
+
+
+# Univariate Plots Section
+
+Now that the data set is pretty much clean and with all the variables needed for my exploration, I'm starting to plot the univariate variables to get an idea of the focus of the exploration in further steps. 
+
+```{r echo=FALSE, warning=FALSE, message= FALSE,dpi= 200, fig.width = 13, fig.height = 8, Univariate_Plots1}
+
+NumberofContributions<-as.data.frame(sort(table
+        (NewNJContributions$CandidateName,dnn = 'Candidate'),decreasing = T),
+        responseName = 'NumberofContributions')
+
+ggplot(aes(x= reorder(Candidate,NumberofContributions), 
+           y = NumberofContributions), data = NumberofContributions[1:15,]) +
+  geom_bar(stat = 'identity') +
+  coord_flip() + 
+  geom_text(stat='identity', aes(label = NumberofContributions),
+           data = NumberofContributions[1:15,], hjust = 0) +
+  theme(axis.text = element_text(size = 12,face = "bold")) +
+  #theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .4)) +
+  xlab("Candidate") +
+  ylab("Count") + 
+  ggtitle("TOP 15 CANDIDATES BASED ON MOST NUMBER OF CONTRIBUTIONS") 
+
+```
+
+Hillary Clinton has got the most number of contributions from 113903 contributors followed by Bernie Sanders and Donald Trump although their contributor counts are pretty much very less when compared to Hillary. 
+
+```{r echo=FALSE, warning=FALSE, message= FALSE,dpi= 200, fig.width = 11, fig.height= 6,Univariate_Plots2}
+
+ggplot(aes(x=reorder(Candidate,NumberofContributions), 
+           y = NumberofContributions/sum(NumberofContributions)), 
+           data = NumberofContributions[1:7,]) +
+    geom_bar(stat = 'identity') +
+    coord_flip() +
+    geom_text(stat='identity', 
+    aes(label = percent(NumberofContributions/sum(NumberofContributions))), 
+       data = NumberofContributions[1:7,], hjust = 0 ) +
+    theme(axis.text = element_text(size = 12,face = "bold")) +
+    #theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .4)) +
+    scale_y_continuous(labels = percent_format()) +
+    xlab("Candidate") +
+    ylab("Percent of total contributions") + 
+    ggtitle("TOP 7 CANDIDATES BASED ON HIGHEST PERCENT OF CONTRIBUTIONS") 
+
+```
+
+In terms of percebtage as well, Hilary clinton leads way ahead than other candidates with more than 50 percent than the other top candidates.
+
+```{r echo=FALSE, warning=FALSE, message= FALSE,dpi= 200, fig.width= 10,fig.height= 6,Univariate_Plots3}
+ContributionsByCity<-as.data.frame(sort(table
+    (NewNJContributions$ContributorCity,dnn = 'City'),decreasing = T),
+      responseName = 'NumberofContributions')
+
+
+ggplot(aes(x= reorder(City, NumberofContributions), y = NumberofContributions), 
+           data = ContributionsByCity[1:15,]) +
+     geom_bar(stat = 'identity') +
+     coord_flip() +
+     #theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .4)) +
+     geom_text(stat='identity', aes(label = NumberofContributions),
+            data = ContributionsByCity[1:15,], hjust = 0) +
+     theme(axis.text = element_text(size = 12,face = "bold")) +
+     xlab("City") +
+     ylab("Count") + 
+     ggtitle("TOP 15 CITIES WITH THE MOST NUMBER OF CONTRIBUTORS") 
+```
+
+Jersey City has made the most number of contributions followed by Princeton.
+
+```{r echo=FALSE, warning=FALSE, message= FALSE,dpi= 200, Univariate_Plots4}
+
+ContributionsAmounts <- as.data.frame(sort(table
+    (NewNJContributions$ContributorReceiptAmount,dnn = 'ContributionAmount'),
+    decreasing = T),responseName = 'NumberofContributions')
+
+options(scipen = 5)
+ggplot(aes(x=ContributorReceiptAmount), data = NewNJContributions) +
+     geom_histogram(binwidth = 100) +
+     scale_x_continuous(breaks = seq(0, 2700, 200), labels = dollar_format(prefix = "$")) +
+     xlab("Conribution Amount") +
+     ylab("Contibution Count") + 
+     ggtitle("HISTOGRAM OF CONTRIBUTION AMOUNTS") 
+
+```
+
+Most of the contributions made are less than $250.00.Looks like the top contribution amounts were lesser than 50 dollars.
+
+```{r echo=FALSE, warning=FALSE, message= FALSE,dpi= 200, Univariate_Plots5}
+
+ ggplot(aes(x=ContributionAmount, y = NumberofContributions), 
+         data = ContributionsAmounts[1:15,]) +
+    geom_bar(stat = 'identity') +
+    #theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .4)) +
+    geom_text(stat='identity', aes(label = NumberofContributions), 
+         data = ContributionsAmounts[1:15,], vjust = -0.4) +
+    xlab("Contribution Amount (In Dollars)") +
+    ylab("Count") + 
+    ggtitle("TOP 15 MOST CONTRIBUTED AMOUNTS") 
+
+```
+
+
+25 and 50 dollars are the top two contribution amounts made by most of the contributors.
+
+```{r echo=FALSE, warning=FALSE, message= FALSE,dpi= 200, fig.width= 10,fig.height= 6, Univariate_Plots6}
+
+
+Occupations <- as.data.frame(sort(table
+  (NewNJContributions$ContributorOcupation,dnn = 'Occupation'),decreasing = T),
+  responseName = 'NumberofContributions')
+
+#Exclue the Information requested 
+
+NewOccupations <- subset(Occupations,Occupation != "INFORMATION REQUESTED" )
+
+ggplot(aes(x= reorder(Occupation, NumberofContributions),
+          y = NumberofContributions), 
+       data = NewOccupations[1:15,]) +
+  geom_bar(stat = 'identity') +
+  coord_flip() +
+  theme(axis.text = element_text(size = 12,face = "bold")) +
+  #theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .4)) +
+  geom_text(stat='identity', aes(label = NumberofContributions), 
+            data = NewOccupations[1:15,], hjust = 0) +
+  xlab("Occupation") +
+  ylab("Count") + 
+  ggtitle("TOP 15 MOST CONTRIBUTED OCCUPATIONS") 
+
+```
+
+Top contributors are retired who made the most number of contributions compared with other occupations.
+
+```{r echo=FALSE, warning=FALSE, message= FALSE,dpi= 200, Univariate_Plots7}
+CountByParty <- as.data.frame(sort(table
+              (NewNJContributions$Party,dnn = 'Party'),decreasing = T),
+                responseName = 'NumberofContributions')
+
+ggplot(aes(x=Party, y = NumberofContributions), data = CountByParty) +
+  geom_bar(stat = 'identity') +
+  geom_text(stat='identity', aes(label = NumberofContributions),
+            data = CountByParty, vjust = -0.4) +
+  xlab("Party") +
+  ylab("Count") + 
+  ggtitle("NUMBER OF CONTRIBUTIONS RECEIVED BY EACH PARTY") 
+
+```
+
+Democratic party has got the most number of contributions followed by the Republican party although the difference is huge.
+
+```{r echo=FALSE, warning=FALSE, message= FALSE,dpi= 200, fig.width = 10,Univariate_Plots8}
+CountByGender <- as.data.frame(sort(table
+                    (NewNJContributions$gender,dnn = 'Gender'),decreasing = T),
+                     responseName = 'NumberofContributions')
+
+NewCountByGender<-subset(CountByGender, (is.na(gender) = TRUE))
+
+GenderbyCount <- ggplot(aes(x=Gender, y = NumberofContributions),
+                        data = NewCountByGender) +
+                 geom_bar(stat = 'identity') +
+                 geom_text(stat='identity', aes(label = NumberofContributions),
+                           data = NewCountByGender, vjust = -0.4) +
+                 xlab("Gender") +
+                 ylab("Count") + 
+                 ggtitle("CONTRIBUTION COUNT BY GENDER") 
+
+GenderbyPercent <- ggplot(aes(x=Gender, 
+                          y=NumberofContributions/sum(NumberofContributions)), 
+                          data = NewCountByGender) +
+                   geom_bar(stat = 'identity') +
+                   geom_text(stat='identity', 
+      aes(label =percent((NumberofContributions/sum(NumberofContributions)))),
+                             data = NewCountByGender, vjust = -0.4) +
+                   scale_y_continuous(labels = percent_format()) +
+                   xlab("Gender") +
+                   ylab("Percent") + 
+                   ggtitle("CONTRIBUTION PERCENT BY GENDER") 
+
+grid.arrange(GenderbyCount,GenderbyPercent, ncol = 2)
+
+```
+
+Most of the conributions were made by males. with the available gender data, only 13% of the contributors were females which is significantly lower percentage.
+
+```{r echo=FALSE, warning=FALSE, message= FALSE,dpi= 200, fig.width= 10,fig.height= 7, Univariate_Plots9}
+CountByYearMonth <- as.data.frame(sort(table
+            (NewNJContributions$year_month,dnn = 'Month-Year'),decreasing = T),
+              responseName = 'NumberofContributions')
+
+
+ggplot(aes(x=reorder( Month.Year, NumberofContributions), y = NumberofContributions), 
+       data = CountByYearMonth[1:15,]) +
+  geom_bar(stat = 'identity') +
+  coord_flip() +
+  theme(axis.text = element_text(size = 12,face = "bold")) +
+  #theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .4)) +
+  geom_text(stat='identity', aes(label = NumberofContributions), 
+            data = CountByYearMonth[1:15,], hjust = 0) +
+  xlab("Month-Year") +
+  ylab("Count") + 
+  ggtitle("Top 15 most Contributions by Month and Year") 
+
+
+```
+
+October 2016, tops the most number of contributions made by months.It is the month closer to election date in November and second followed by July 2016, the month after the primaries and caucuses ended and the month, the nominees for the parties were decided.
+
+
+##SUMMARY OF UNIVARIATE ANALYSIS
+
+####Structure of the data set
+
+After removing the negative contributions as well as  the contributions exceeding the limit and adding new variables that will be helpful in the analysis, the structure of the data set is 201166 observations with 28 variables.
+
+####Main features of interest in the dataset
+
+From univariate plotting, I made the following observations 
+
+1. Hillary Clinton has got the most number of contributions followed by Bernie Sanders and Donald Trump.
+2. Jersey City has made the most number of contributions followed by Princeton.
+3. Most of the contributions made are less than $250.00 with 25 and 50 dollars being the top two contribution amounts made by most of the contributors.
+4. Top contributors are retired who made the most number of contributions compared with other occupations.
+5. Democratic party has got the most number of contributions followed by the Republican party although the difference is huge.
+6. Most of the conributions were made by males. with the available gender data, only 15% of the contributors were females.
+7.Most number of contributions were made in october 2016, the month closer to election date followed by July 2016, the month, the primaries and caucuses ended and the nominees for the parties were decided.
+
+
+#### Other features in the dataset that support further analysis
+
+I'm more interested in exploring the contribution amounts with the variables.Does more number of contribution mean more donation? In which month did the contribution amount received was highest? 
+
+#### Adding New variables from existing variables in the dataset
+
+Since, the data is related with Presendential campaign, it is necessary to analyze it based based on the party which I created with the Candidates name from the dataset as below. 
+
+Democratic Party - Hillary  Clinton, Bernie Sanders,Martin O'Malley, Lawrence Lessig, James Webb
+Libertarian Party - Gary Johnson
+Green Party - Jill Stein
+Independent Party -  Evan McMullin
+
+Also, since the exploration is for the stae of New Jersey, I added the Latitude and Longitude variables from the Zipcode.
+
+I was interested to see if woman candidates got more contributions from females.Do I added the gender using the gender package. This helped to get just an idea of the distribution since there were names in the dataset those were not actual names like "A" or "4asted"
+
+Finally from the date variable , I wanted the month and year variable separately to be helpful in plotting and also to see the contribution distribution in accordance with the election date which was November 8 for the year 2016.
+
+
+
+# Bivariate Plots Section
+
+```{r echo=FALSE,warning=FALSE, message= FALSE,dpi= 200,  Bivariate_Plots1}
+#contibutions by party 
+
+ggplot(aes(x=Party, y = ContributorReceiptAmount, fill = Party), 
+       data = NewNJContributions) +
+  geom_boxplot() +
+  scale_y_continuous(labels = dollar_format(prefix = "$")) +
+  xlab("Party") +
+  ylab("Contibution Amount") + 
+  ggtitle("Contribution Amount BoxPlot by Party") +
+  scale_fill_manual(values = c("#0000ff","#00e600","#c61aff","#ffd633",
+                               "#ff471a"))
+
+```
+
+From the Box Plot, looks like the Democratic party has more number of outliers with a median contribution of $25.00 which is lesser than the median contribution of the Republican Party which is 53.00 dollars.Democratic party has received more number of large contribution amounts from the contributors than small amount when compared with the Republican party.
+
+
+```{r echo=FALSE,warning=FALSE, message= FALSE,dpi= 200,  Bivariate_Plots2}
+
+ContributionsByParty <- NewNJContributions %>%
+                        group_by(Party) %>%
+                        summarise(Total = sum(ContributorReceiptAmount))
+
+#by( NewNJContributions$ContributorReceiptAmount,NewNJContributions$Party,
+#     summary)
+
+ggplot(aes(x=Party, y=Total/1000, fill = Party), 
+       data = ContributionsByParty) +
+  geom_bar(stat='identity') +
+  geom_text(stat='identity', aes(label = round(Total/1000)),
+            data = ContributionsByParty, vjust = -0.4) +
+  ylab("Total Contribution (In Thousands)") +
+  xlab("Party") + 
+  ggtitle("TOTAL CONTRIBUTIONS RECEIVED BY PARTIES (IN THOUSANDS)") +
+  scale_y_continuous(labels = dollar_format(prefix = "$")) +
+  scale_fill_manual(values = c("#0000ff","#00e600","#c61aff","#ffd633",
+                               "#ff471a"))
+
+```
+
+The Democratic Party has recieved the highest contribution amount of $146,92,000 followed by the Republican Party with 104,85,000.
+
+```{r echo=FALSE,warning=FALSE, message= FALSE,dpi= 300, fig.width = 20,fig.height= 14,  Bivariate_Plots3}
+#Contribuyions by candidates 
+
+Candidates <- NewNJContributions %>%
+              group_by(CandidateName) %>%
+              summarise(TotalContributions = sum(ContributorReceiptAmount),
+              contributor = n()) %>%
+              arrange(TotalContributions)
+
+Candidates$CandidateName <- factor(Candidates$CandidateName)
+
+
+#by(NewNJContributions$ContributorReceiptAmount,NewNJContributions$CandidateName,
+#       sum)
+
+ggplot(aes(x= reorder(CandidateName, TotalContributions),
+           y= TotalContributions), data = Candidates) +
+  geom_bar(stat = 'identity') + 
+  coord_flip() +
+  theme(axis.text = element_text(size = 12,face = "bold")) +
+  scale_y_continuous(labels = dollar_format(prefix = "$")) +
+  geom_text(stat = 'identity', aes(label = dollar(round(TotalContributions))),
+            data = Candidates, hjust = 0) +
+  ylab("Contibution Amount (In DOllars)") +
+  xlab("Candidate") +
+  ggtitle("CONTRIBUTIONS RECEIVED BY CANDIDATES") 
+
+```
+
+ Hillary Clinton has received the highest amount of contribution of 125,29,471
+
+```{r echo=FALSE,warning=FALSE, message= FALSE,dpi= 200,fig.width=20, fig.height= 12,  Bivariate_Plots4}
+# Contribution by occupation 
+
+
+Occupations <- subset(NewNJContributions,  
+                      ContributorOcupation != "INFORMATION REQUESTED") %>%
+    group_by(ContributorOcupation) %>%
+    summarise(TotalContributions = sum(ContributorReceiptAmount), n = n()) %>%
+    top_n(10,n)
+
+ggplot(aes(x= reorder(ContributorOcupation,TotalContributions), 
+           y= TotalContributions), data = Occupations) +
+  geom_bar(stat = 'identity') + 
+  coord_flip() +
+  scale_y_continuous(labels = dollar_format(prefix = "$")) +
+  theme(axis.text = element_text(size = 12,face = "bold")) +
+  #theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .4)) +
+  geom_text(stat = 'identity', aes(label = dollar(TotalContributions)),
+            data = Occupations, hjust = 0) +
+  ylab("Contribution Amount (In Dollars)") +
+  xlab("Occupation") +
+  ggtitle("CONTRIBUTIONS BY OCCUPATIONS") 
+
+```
+
+Retired people have contributed the highest amount.
+
+```{r echo=FALSE,warning=FALSE, message= FALSE,dpi= 200,fig.width=18, fig.height= 11, Bivariate_Plots5}
+# Contribution by date
+
+ContributionAmountbyDate <- NewNJContributions  %>%
+      group_by(year_month) %>%
+      summarise(TotalContributions = sum(ContributorReceiptAmount), n = n()) %>%
+      top_n(10,n)
+
+ ggplot(aes(x= reorder(year_month,TotalContributions), 
+            y= TotalContributions), data = ContributionAmountbyDate) +
+  coord_flip() +
+  geom_bar(stat = 'identity') +
+  scale_y_continuous(labels = dollar_format(prefix = "$")) +
+   theme(axis.text = element_text(size = 12,face = "bold")) +
+  geom_text(stat = 'identity', aes(label = dollar(TotalContributions)), 
+            data = ContributionAmountbyDate, hjust = 0) +
+  ylab("Contribution Amount (In Dollars)") +
+  xlab("Month-Year") +
+  ggtitle("CONTRIBUTIONS RECEIVED BY MONTH-YEAR") 
+ 
+```
+
+The highest contributions were made in the month if October, 2016, which was closer to the election date (Nov 8, 2016)
+
+```{r echo=FALSE,warning=FALSE, message= FALSE,dpi= 200, fig.width= 20, fig.height= 12,  Bivariate_Plots6} 
+ 
+ 
+ # Contribution by Cities
+
+ContributionAmountbyCity <- NewNJContributions  %>%
+   group_by(ContributorCity) %>%
+  summarise(TotalContributions = sum(ContributorReceiptAmount), n = n()) %>%
+  top_n(10,n)
+
+ ggplot(aes(x= reorder(ContributorCity,TotalContributions), 
+            y= TotalContributions), data = ContributionAmountbyCity) +
+  geom_bar(stat = 'identity') + 
+  scale_y_continuous(labels = dollar_format(prefix = "$")) +
+   theme(axis.text = element_text(size = 12,face = "bold")) +
+  coord_flip() +
+  geom_text(stat = 'identity', aes(label = dollar(TotalContributions)), 
+            data = ContributionAmountbyCity, hjust = 0) +
+  #theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .4)) +
+  ylab("Contribution Amount") +
+  xlab("City") +
+  ggtitle("CONTRIBUTION AMOUNT BY CITIES") 
+
+
+```
+
+The city of Princeton made the highest amount of contribution. Although there were more number of contributors from Jersey city, it is renked third in the contribution amount. This might mean that there were many small contributors from Jersey city.
+
+# SUMMARY OF BIVARIATE ANALYSIS
+
+#### Relationships observed from Bivariate Plotting 
+
+From Bivariate Plotting, I observed the following relationships.
+
+1. From the Box Plot, looks like the Democratic party has more number of outliers with a median contribution of $25.00 which is lesser than the median contribution of the Republican Party which is 53.00 dollars.Democratic party has received more number of large contribution amounts from the contributors than small amount when compared with the Republican party.
+2. The Democratic Party has recieved the highest contribution amount of $146,92,000 followed by the Republican Party with 104,85,000.
+3. Hillary Clinton has received the highest amount of contribution of 125,29,471.
+4. Retired people have contributed the highest amount.
+5. The highest contributions were made in the month if October, 2016, which was closer to the election date (Nov 8, 2016)
+6. The city of Princeton made the highest amount of contribution. Although there were more number of contributors from Jersey city, it is renked third in the contribution amount. This might mean that there were many small contributors from Jersey city.
+
+
+### Interesting  Observation
+
+The most interesting observation from the analysis so far is that Hilary clinton has got more number of contributions as well as highest amount of contribution. Now, although Donald Trump and Bernie sanders got the most number of contributions, in terms of the contribution amount,they stand third and fourth. This might be because they had more number of small contributors to fund.Christie Christopher on the other hand had  large cobtribution amount from less number of High contributors.
+
+
+# Multivariate Plots Section
+
+
+```{r echo=FALSE, warning=FALSE, message= FALSE,  dpi= 200, Multivariate_Plots1}
+
+ggplot(aes(x=ContributorReceiptAmount, fill = Party), 
+       data = NewNJContributions) +
+  geom_histogram(binwidth = 100,position = position_dodge()) +
+  scale_x_continuous(breaks = seq(0, 2700, 200)) +
+  ylim(0,1000) +
+  xlab("Conribution Amount (In Dollars)") +
+  ylab("Contibution Count") + 
+  ggtitle("HISTOGRAM OF CONTRIBUTION AMOUNTS TO PARTIES") +
+  scale_fill_manual(values = c("#0000ff","#00e600","#c61aff","#ffd633",
+                               "#ff471a"))
+```
+
+From the above histogram, the leading parties - Democratic and Republican have a spread of various contribution amounts from small to large. The other three parties - Independent, Liberatarian and Green party have mostly smaller contribution amounts.
+
+```{r echo=FALSE, warning=FALSE, message= FALSE, fig.width= 8, dpi= 300,  fig.width= 21,fig.height= 12, Multivariate_Plots2}
+
+CandidatesbyParty <- NewNJContributions %>%
+                   group_by(Party,CandidateName) %>%
+                   summarise(TotalContributions = sum(ContributorReceiptAmount),
+                   contributor = n()) %>%
+                   arrange(TotalContributions)
+
+options(scipen = 5)
+ggplot(aes(x=reorder(CandidateName, TotalContributions), 
+           y= TotalContributions), data = CandidatesbyParty) +
+  geom_bar(stat = 'identity', aes(fill = Party)) + coord_flip() +
+  geom_text(stat = 'identity', aes(label = dollar(TotalContributions))
+            , data = CandidatesbyParty, hjust = 0) +
+  scale_y_continuous(labels = dollar_format(prefix = "$")) +
+  theme(axis.text = element_text(size = 12,face = "bold")) +
+  ylab("Contribution Amounts(In Dollars)") +
+  #ylim(0,13000000) +
+  xlab("Candidate") +
+  ggtitle("CONTRIBUTIONS RECEIVED BY CANDIDATES") +
+  scale_fill_manual(values = c("#0000ff","#00e600","#c61aff","#ffd633",
+                                "#ff471a"))
+
+
+```
+
+From the Bar chart, Hilary Clinton and  Bernie Sanders of the Democratic Party and Donald Trump and Chris Christie of the Republican Party are the top four candidates who received the highest amount of total contributions.
+
+```{r echo=FALSE, warning=FALSE, message= FALSE,  dpi= 200, Multivariate_Plots3}
+
+TopOccupations = c("RETIRED", "ATTORNEY", "HOMEMAKER", "NOT EMPLOYED",
+                   "PHYSICIAN", "CONSULTANT", "PROFESSOR", "ENGINEER", "SALES")
+
+MajorParty = c("Democrat", "Republican")
+
+
+OccupationsContributionsByParty<-subset(NewNJContributions, 
+          ContributorOcupation %in% TopOccupations & Party %in% MajorParty) %>%
+          group_by(ContributorOcupation, Party) %>% 
+          summarise(n=n(), Total = sum(ContributorReceiptAmount)) 
+
+ggplot(aes(x= ContributorOcupation, y= Total), 
+       data = OccupationsContributionsByParty) +
+  geom_histogram(stat = 'identity',position = position_dodge(),
+                 aes(fill = Party)) + 
+  coord_flip() +
+  #theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .4)) +
+  ylab("Contibution Amount (In Dollars)") +
+  xlab("Candidate") +
+  ggtitle("CONTRIBUTIONS BY OCCUPATIONS TO THE LEADING PARTIES") +
+  scale_fill_manual(values = c("#0000ff","#ff471a"))
+
+```
+
+The top occupations that contributed the most seems to have leaned towards contributing more to the Democratic Party except for Sales and Homemakers in which the trend shows that contributions made were more for the Republican Party 
+
+```{r echo=FALSE, warning=FALSE, message= FALSE,  dpi= 200, Multivariate_Plots4}
+
+
+ggplot() + 
+  geom_polygon(data = NJmap, aes(x=long, y=lat, group = group), 
+               colour = "black", fill = "#00b3b3") +
+  geom_point(data = NewNJContributions, aes(x=Longitude , y= Latitude, 
+                                            color = Party)) +
+  geom_text(data = CountyNames, aes(long,lat,label=subregion))+
+  xlab("Longitude") +
+  ylab("Latitude") +
+  ggtitle("CONTRIBUTION SPREAD ACROSS COUNTIES") +
+  scale_color_manual(values = c("#0000ff","#00e600","#c61aff","#ffd633",
+                                "#ff471a"))
+
+```
+
+Bergen, Essex, Hudson, Camden counties seems to have made more number of contributors wehen compared to other counties and also the contributors to the republican party seems much more widespread compared to the  other parties.
+
+```{r echo=FALSE, warning=FALSE, message= FALSE,  dpi= 200, Multivariate_Plots5}
+
+TotalZip <- NewNJContributions %>%
+            group_by(ContributorZip) %>%
+            summarise(value = sum(ContributorReceiptAmount)) 
+
+TotalZip$region <- TotalZip$ContributorZip
+
+TotalZip <- na.omit(TotalZip)
+
+zip_choropleth(TotalZip, num_color = 6, state_zoom = "new jersey", 
+               title="TOTAL CONTRIBUTIONS BY COUNTY") +
+  coord_map() +
+  scale_fill_brewer(name="Contribution", palette=2, drop=FALSE)
+
+
+
+```
+
+somerset, Morris, Hunterdon, Monmouth counties seems to have highest contribution amounts.
+
+# Multivariate Analysis
+
+### Summary of Observations 
+
+From multivariate plotting, the following are the relationships I observed. 
+
+1. Looking at the histogram of contribution amount by Party, The leading parties - Democratic and Republican have a spread of various contribution amounts from small to large. The other three parties - Independent, Liberatarian and Green party have mostly smaller contribution amounts.
+2. The top candidates of the leading party, Hilary Clinton and  Bernie Sanders of the Democratic Party and Donald Trump and Chris Christie of the Republican Party have received the highest amount of contributions. 
+3. The top occupations that contributed the most seems to have leaned towards contributing more to the Democratic Party except for Sales and Homemakers in which the trend shows that contributions made were more for the Republican Party 
+4. The counties - Bergen, Essex, Hudson, Camden seems to have made more number of contributors wehen compared to other counties and also the contributors to the republican party seems much more widespread compared to the  other parties. 
+5. The counties - somerset, Morris, Hunterdon, Monmouth seems to have highest contribution amounts. 
+
+# Final Plots and Summary
+
+### Box Plot of Contribution Amounts for each Party 
+```{r echo=FALSE, warning = FALSE, message= FALSE, dpi= 200, Plot_One}
+
+ggplot(aes(x=Party, y = ContributorReceiptAmount, fill = Party),
+       data = NewNJContributions) +
+  geom_boxplot() +
+  scale_y_continuous(labels = dollar_format(prefix = "$")) +
+  xlab("Party") +
+  ylab("Contibution Amount (In Dollars") + 
+  ggtitle("BOXPLOT OF CONTRIBUTION AMOUNTS RECEIVED BY PARTIES") +
+  scale_fill_manual(values = c("#0000ff","#00e600","#c61aff","#ffd633",
+                               "#ff471a"))
+
+```
+
+### Description 
+
+The Democratic party has a median contribution of $25.00 which is lesser than the median contribution of the Republican Party which is 53.00 dollars.The Democartic Party has more number of outliers which implies that the party has received more number of large contribution amounts from the contributors than small amount.Next to this is the republican party which has a better spread than the democratic party with more number of small contributors. The republican party also has outliers, the large contributors but it is lesser compared to the Democratic Party.
+
+### Contribution Amount Received by the Candidates
+```{r echo=FALSE, warning= FALSE, message= FALSE, dpi= 300, fig.width= 22, fig.height= 12,  Plot_Two}
+options(scipen = 5)
+ggplot(aes(x=reorder(CandidateName, TotalContributions), 
+           y= TotalContributions), data = CandidatesbyParty) +
+  geom_bar(stat = 'identity', aes(fill = Party)) + coord_flip() +
+  geom_text(stat = 'identity', aes(label = dollar(TotalContributions))
+            , data = CandidatesbyParty, hjust = 0) +
+  scale_y_continuous(labels = dollar_format(prefix = "$")) +
+  ylab("Contribution Amounts(In Dollars)") +
+  #ylim(0,13000000) +
+  xlab("Candidate") +
+  theme(axis.text = element_text(size = 12,face = "bold")) +
+  ggtitle("CONTRIBUTIONS RECEIVED BY CANDIDATES") +
+  scale_fill_manual(values = c("#0000ff","#00e600","#c61aff","#ffd633",
+                                "#ff471a"))
+
+```
+
+### Description 
+
+The top five candidates by the amount of contribution received are Hillary Clinton, Chris Christie, Donald Trump, Bernie Sanders and Jeb Bush. All of them are the top candidates of the leading parties - Democratic and Republican. This Plot also explains that Hillary Clinton has got the highest amount of contribution leap from the total contributions that the Democratic Party got.Top Candidates from Republican party on the other hand, have almost same spread of total contribution amounts. One more interesting observation to note here is that although Donald Trump has got more number of contributors, Chris Christies seems to lead by the contribution amount. This might be because Chris Christie has small number of contributors but have contributed huge amounts. 
+
+### Total Contribution Spread in Counties
+```{r echo=FALSE, warning= FALSE, message= FALSE,dpi= 200,  Plot_Three}
+
+zip_choropleth(TotalZip, num_color = 6, state_zoom = "new jersey",  
+                title="TOTAL CONTRIBUTIONS BY COUNTY") +
+               coord_map() + 
+               scale_fill_brewer(name="Contribution", palette=2, drop=FALSE)
+
+
+```
+
+### Description 
+
+The counties - Somerset, Morris, Hunterdon, Monmouth, Mercer seems to have highest contribution amounts although these were not the top counties with high number of contributors.It is  interesting to note that these conuties are ranked top with high median household income. There are also high contribution notices in counties such as ocean, middlesex. This might be because contributors from these county would have supported a particular candidate or a party and would have made high amount of contributions. 
+
+------
+
+# Reflection
+
+I chose to explore the city of New Jersey because that is the city I live in. Although New Jersey is a blue state/Democratic state, I thought it would be interesting to explore the fiancial contibution by the people of New Jersey to the candidates and party. 
+
+The way of exploring the project splitting it into Univariate, Bivariate and Multivariate was a very helpful method to think about questions and answer them in the flow of the project. Initally when performing the Univariate analysis, I was focussed on the number of contributions made for different parties and candidates,number of contributions made based on contributors city, occupation, gender and ofcourse the number of contributions made based on contribution amounts. When looking at these variables and counts, question such as if number of contributions were related to contribution amounts and also the spread of contributions across the state of NJ. To answer these questions, the Bivariate analysis helped me figure out a good flow to get the best way to analyze these variables. Finally Multivariate analysis helped put togther the variables from univariate and bivariate analysis and yield a final explanation of the contribution spread. 
+
+Afterthe exploration, it indeed was true that there were more contributors to the Democratic Party. 
+
+Since this was my first project exploring data with R, I enjoyed learning new ways to explore this dataset. Learning about the Choropleth and gender package was very interesting. I had difficulties in getting the code run when coding with these packages but help from internet blog posts were good guiding factors to complete this Project. 
+
+Future analysis would include looking at other states and also to analyse by choosing a particulat candidate and looking at the contributions received by them. 
