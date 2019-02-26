@@ -8,7 +8,9 @@ I chose to explore the city of New Jersey.New Jersey is considered a blue state/
 The project is split into the following analysis:
 
 -Univariate
+
 -Bivariate 
+
 -Multivariate 
 
 This was a very helpful method to think about questions and answer them in the flow of the project. 
