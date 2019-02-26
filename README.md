@@ -17,6 +17,4 @@ This was a very helpful method to think about questions and answer them in the f
 
 Univariate analysis helped figure out trends in different variables.To answer the questions formed with univariate analysis, the Bivariate analysis helped me figure out a good flow to get the best way to analyze variable pairs. Finally Multivariate analysis helped put togther the variables from univariate and bivariate analysis and yield a final explanation of the contribution spread. 
 
-You can find the code [Madhu317/Financial-Contributions-by-NJ-US-Election2016/NJFinancialContributions.Rmd] (here) and the summary [
-        Madhu317/Financial-Contributions-by-NJ-US-Election2016/NJFinancialContributions.pdf
-      ] (here)
+You can find the code [here] (Madhu317/Financial-Contributions-by-NJ-US-Election2016/NJFinancialContributions.Rmd) and the summary [here] (Madhu317/Financial-Contributions-by-NJ-US-Election2016/NJFinancialContributions.pdf)
